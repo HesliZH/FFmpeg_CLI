@@ -6,8 +6,10 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
-  <ItemGroup>
-    <Content Include="tools\\ffmpeg.exe" Condition="Exists('tools\\ffmpeg.exe')">
+  <ItemGroup>    <Compile Remove="MeuFFmpeg.Tests\**\*.cs" />
+  </ItemGroup>
+
+  <ItemGroup>    <Content Include="tools\\ffmpeg.exe" Condition="Exists('tools\\ffmpeg.exe')">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
   </ItemGroup>
