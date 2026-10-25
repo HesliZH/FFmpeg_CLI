@@ -1,0 +1,55 @@
+# Build outputs
+[Bb]in/
+[Oo]bj/
+[Dd]ebug/
+[Rr]elease/
+[xX]64/
+[xX]86/
+artifacts/
+TestResults/
+
+# .NET / NuGet
+*.dll
+*.exe
+*.pdb
+*.aps
+*.cache
+*.nupkg
+*.snupkg
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+packages/
+project.lock.json
+
+# Visual Studio / VS Code
+.vs/
+.vscode/
+.idea/
+*.code-workspace
+*.iml
+
+# Logs and temp files
+*.log
+*.tmp
+*.temp
+*.tlog
+*.pid
+
+# OS generated files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Coverage / test results
+*.coverage
+*.coveragexml
+coverage/
+
+# Local secrets / generated config
+appsettings.Development.json
+secrets.json
+*.db
+*.db-shm
+*.db-wal
