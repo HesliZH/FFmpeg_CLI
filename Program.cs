@@ -13,6 +13,7 @@ while (true)
     Console.WriteLine("==================================");
     Console.WriteLine("1. Cortar vídeo");
     Console.WriteLine("2. Verificar FFmpeg");
+    Console.WriteLine("3. Converter para VHS");
     Console.WriteLine("==================================");
     Console.WriteLine("99. Configurações");
     Console.WriteLine("100. Sobre");
@@ -30,6 +31,9 @@ while (true)
         case "2":
             ffmpeg.ShowVersion();
             Pause();
+            break;
+        case "3":
+            await ConvertToVhsAsync(ffmpeg, settings);
             break;
         case "99":
             settings = ConfigureSettings(settings);
@@ -131,6 +135,70 @@ static async Task CutVideoAsync(FFmpegService ffmpeg, AppSettings settings)
     Pause();
 }
 
+static async Task ConvertToVhsAsync(FFmpegService ffmpeg, AppSettings settings)
+{
+    Console.Clear();
+    Console.WriteLine("========== Converter para VHS ==========\n");
+
+    var defaultInputFolder = !string.IsNullOrWhiteSpace(settings.DefaultInputFolder)
+        ? settings.DefaultInputFolder
+        : Directory.GetCurrentDirectory();
+
+    Console.Write($"Caminho do vídeo de entrada (padrão: {defaultInputFolder}): ");
+    var rawInput = Console.ReadLine();
+    var input = string.IsNullOrWhiteSpace(rawInput)
+        ? SearchInputPathInDefaultFolder(defaultInputFolder)
+        : ResolvePath(rawInput, defaultInputFolder);
+
+    if (string.IsNullOrWhiteSpace(input) || !File.Exists(input))
+    {
+        Console.WriteLine("\nArquivo não encontrado.");
+        Pause();
+        return;
+    }
+
+    Console.WriteLine("\nPadrão de vídeo 4:3:");
+    Console.WriteLine("1. NTSC 640x480 (padrão)");
+    Console.WriteLine("2. PAL 768x576");
+    Console.Write("Escolha (1 ou 2) [1]: ");
+    var standard = Console.ReadLine()?.Trim();
+    var (width, height) = standard == "2" ? (768, 576) : (640, 480);
+
+    var defaultOutputFolder = !string.IsNullOrWhiteSpace(settings.DefaultOutputFolder)
+        ? settings.DefaultOutputFolder
+        : Path.GetDirectoryName(input)!;
+
+    Console.Write($"Caminho do arquivo de saída (padrão: {defaultOutputFolder}): ");
+    var rawOutput = Console.ReadLine();
+    var output = string.IsNullOrWhiteSpace(rawOutput)
+        ? SuggestOutputPath(input, defaultOutputFolder, "_vhs", ".mp4")
+        : ResolvePath(rawOutput, defaultOutputFolder);
+
+    try
+    {
+        Console.WriteLine("\nIniciando FFmpeg...\n");
+        var exitCode = await ffmpeg.ConvertToVhsAsync(input, output, width, height);
+
+        Console.WriteLine(exitCode == 0
+            ? $"\nConversão concluída!\nArquivo: {output}"
+            : $"\nO FFmpeg terminou com código {exitCode}. Confira as mensagens acima.");
+    }
+    catch (ArgumentException ex)
+    {
+        Console.WriteLine($"\nEntrada inválida: {ex.Message}");
+    }
+    catch (FileNotFoundException ex)
+    {
+        Console.WriteLine($"\n{ex.Message}");
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"\nErro ao converter: {ex.Message}");
+    }
+
+    Pause();
+}
+
 static AppSettings ConfigureSettings(AppSettings currentSettings)
 {
     Console.Clear();
@@ -216,7 +284,11 @@ static string SearchInputPathInDefaultFolder(string defaultFolder)
     return files[0];
 }
 
-static string SuggestOutputPath(string inputPath, string defaultOutputFolder)
+static string SuggestOutputPath(
+    string inputPath,
+    string defaultOutputFolder,
+    string suffix = "_corte",
+    string? outputExtension = null)
 {
     if (string.IsNullOrWhiteSpace(inputPath))
         return string.Empty;
@@ -226,8 +298,8 @@ static string SuggestOutputPath(string inputPath, string defaultOutputFolder)
         : defaultOutputFolder;
 
     var name = Path.GetFileNameWithoutExtension(inputPath);
-    var ext = Path.GetExtension(inputPath);
-    return Path.Combine(folder, $"{name}_corte{ext}");
+    var ext = outputExtension ?? Path.GetExtension(inputPath);
+    return Path.Combine(folder, $"{name}{suffix}{ext}");
 }
 
 static string CleanPath(string? value)

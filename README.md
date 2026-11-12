@@ -62,6 +62,17 @@ Copie a pasta `tools` para dentro da pasta `publish` para que o programa encontr
 
 O programa não apaga o arquivo original. Se já existir um arquivo de saída com o mesmo nome, o FFmpeg irá sobrescrevê-lo (`-y`).
 
+## Como converter para VHS
+
+1. Escolha `3. Converter para VHS`.
+2. Informe o caminho do vídeo ou pressione Enter para usar o primeiro arquivo da pasta padrão.
+3. Escolha o padrão de vídeo 4:3:
+   - **NTSC (padrão):** escala para `640x480`.
+   - **PAL:** escala para `768x576`.
+4. Informe o destino ou pressione Enter para gerar `_vhs.mp4`.
+
+A conversão usa `-vf "scale=WxH,setsar=1"`, `-c:v libx264 -crf 20` e `-c:a copy` (áudio original preservado). O `setsar=1` garante pixels quadrados, evitando distorções em players modernos.
+
 ## Observações
 
 - O modo preciso exige que a compilação do FFmpeg inclua `libx264`.

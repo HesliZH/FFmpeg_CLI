@@ -174,6 +174,55 @@ public sealed class FFmpegService
         startInfo.ArgumentList.Add("-y");
         startInfo.ArgumentList.Add(fullOutput);
 
+        return await RunAsync(startInfo);
+    }
+
+    public async Task<int> ConvertToVhsAsync(
+        string inputPath,
+        string outputPath,
+        int width,
+        int height)
+    {
+        if (!File.Exists(inputPath))
+            throw new FileNotFoundException("O vídeo de entrada não foi encontrado.", inputPath);
+
+        var fullOutput = Path.GetFullPath(outputPath);
+        var fullInput = Path.GetFullPath(inputPath);
+
+        if (string.Equals(fullInput, fullOutput, StringComparison.OrdinalIgnoreCase))
+            throw new ArgumentException("O arquivo de saída não pode ser o mesmo arquivo de entrada.");
+
+        var outputDirectory = Path.GetDirectoryName(fullOutput);
+        if (!string.IsNullOrWhiteSpace(outputDirectory))
+            Directory.CreateDirectory(outputDirectory);
+
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = _ffmpegPath,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true
+        };
+
+        startInfo.ArgumentList.Add("-i");
+        startInfo.ArgumentList.Add(fullInput);
+        startInfo.ArgumentList.Add("-vf");
+        startInfo.ArgumentList.Add($"scale={width}:{height},setsar=1");
+        startInfo.ArgumentList.Add("-c:v");
+        startInfo.ArgumentList.Add("libx264");
+        startInfo.ArgumentList.Add("-crf");
+        startInfo.ArgumentList.Add("20");
+        startInfo.ArgumentList.Add("-c:a");
+        startInfo.ArgumentList.Add("copy");
+        startInfo.ArgumentList.Add("-y");
+        startInfo.ArgumentList.Add(fullOutput);
+
+        return await RunAsync(startInfo);
+    }
+
+    private static async Task<int> RunAsync(ProcessStartInfo startInfo)
+    {
         using var process = new Process { StartInfo = startInfo };
 
         process.ErrorDataReceived += (_, e) =>
