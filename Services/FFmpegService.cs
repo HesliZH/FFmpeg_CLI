@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Text.RegularExpressions;
 
 namespace MeuFFmpeg.Services;
 
@@ -221,6 +222,92 @@ public sealed class FFmpegService
         return await RunAsync(startInfo);
     }
 
+    public async Task<int> ConcatAsync(
+        string outputPath,
+        string? introPath,
+        IReadOnlyList<string> videoPaths)
+    {
+        var inputs = new List<string>();
+        if (!string.IsNullOrWhiteSpace(introPath))
+            inputs.Add(introPath);
+        inputs.AddRange(videoPaths);
+
+        foreach (var input in inputs)
+        {
+            if (!File.Exists(input))
+                throw new FileNotFoundException($"O vídeo \"{input}\" não foi encontrado.", input);
+        }
+
+        var fullOutput = Path.GetFullPath(outputPath);
+        var fullInputs = inputs.Select(Path.GetFullPath).ToList();
+
+        if (fullInputs.Contains(fullOutput, StringComparer.OrdinalIgnoreCase))
+            throw new ArgumentException("O arquivo de saída não pode ser um dos arquivos de entrada.");
+
+        var outputDirectory = Path.GetDirectoryName(fullOutput);
+        if (!string.IsNullOrWhiteSpace(outputDirectory))
+            Directory.CreateDirectory(outputDirectory);
+
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = _ffmpegPath,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true
+        };
+
+        startInfo.ArgumentList.Add("-y");
+        foreach (var input in fullInputs)
+        {
+            startInfo.ArgumentList.Add("-i");
+            startInfo.ArgumentList.Add(input);
+        }
+
+        // Normaliza resolução (4:3), pixels quadrados e FPS em todos os vídeos antes de emendar.
+        startInfo.ArgumentList.Add("-filter_complex");
+        startInfo.ArgumentList.Add(BuildConcatFilter(fullInputs.Count));
+
+        startInfo.ArgumentList.Add("-map");
+        startInfo.ArgumentList.Add("[outv]");
+        startInfo.ArgumentList.Add("-map");
+        startInfo.ArgumentList.Add("[outa]");
+
+        // Saída compatível com DVD Player (DivX/Xvid + MP3 em AVI 4:3).
+        startInfo.ArgumentList.Add("-c:v");
+        startInfo.ArgumentList.Add("mpeg4");
+        startInfo.ArgumentList.Add("-vtag");
+        startInfo.ArgumentList.Add("XVID");
+        startInfo.ArgumentList.Add("-qscale:v");
+        startInfo.ArgumentList.Add("4");
+        startInfo.ArgumentList.Add("-c:a");
+        startInfo.ArgumentList.Add("libmp3lame");
+        startInfo.ArgumentList.Add("-b:a");
+        startInfo.ArgumentList.Add("192k");
+        startInfo.ArgumentList.Add("-ar");
+        startInfo.ArgumentList.Add("44100");
+        startInfo.ArgumentList.Add("-ac");
+        startInfo.ArgumentList.Add("2");
+        startInfo.ArgumentList.Add(fullOutput);
+
+        return await RunWithProgressAsync(startInfo);
+    }
+
+    private static string BuildConcatFilter(int inputCount)
+    {
+        var parts = new List<string>(inputCount * 2 + 1);
+        for (var i = 0; i < inputCount; i++)
+        {
+            parts.Add($"[{i}:v]scale=640:480,setsar=1,fps=30[v{i}]");
+            parts.Add($"[{i}:a]aresample=44100[a{i}]");
+        }
+
+        var concatInputs = string.Concat(Enumerable.Range(0, inputCount).Select(i => $"[v{i}][a{i}]"));
+        parts.Add($"{concatInputs}concat=n={inputCount}:v=1:a=1[outv][outa]");
+
+        return string.Join("; ", parts);
+    }
+
     private static async Task<int> RunAsync(ProcessStartInfo startInfo)
     {
         using var process = new Process { StartInfo = startInfo };
@@ -240,6 +327,55 @@ public sealed class FFmpegService
         await stdoutTask;
 
         return process.ExitCode;
+    }
+
+    private static async Task<int> RunWithProgressAsync(ProcessStartInfo startInfo)
+    {
+        var totalDuration = TimeSpan.Zero;
+        var durationRegex = new Regex(@"Duration:\s(\d{2}:\d{2}:\d{2}\.\d{2})");
+        var timeRegex = new Regex(@"time=(\d{2}:\d{2}:\d{2}\.\d{2})");
+
+        using var process = new Process { StartInfo = startInfo };
+
+        process.ErrorDataReceived += (_, e) =>
+        {
+            if (string.IsNullOrWhiteSpace(e.Data))
+                return;
+
+            // Com uma intro, o FFmpeg imprime "Duration:" uma vez por arquivo; soma ao total.
+            var durMatch = durationRegex.Match(e.Data);
+            if (durMatch.Success && TimeSpan.TryParse(durMatch.Groups[1].Value, out var parsedDuration))
+                totalDuration += parsedDuration;
+
+            var timeMatch = timeRegex.Match(e.Data);
+            if (timeMatch.Success &&
+                totalDuration.TotalSeconds > 0 &&
+                TimeSpan.TryParse(timeMatch.Groups[1].Value, out var currentTime))
+            {
+                var percentage = Math.Min(100.0, currentTime.TotalSeconds / totalDuration.TotalSeconds * 100.0);
+                DrawProgressBar(percentage, currentTime, totalDuration);
+            }
+        };
+
+        process.Start();
+        process.BeginErrorReadLine();
+
+        var stdoutTask = process.StandardOutput.ReadToEndAsync();
+        await process.WaitForExitAsync();
+        await stdoutTask;
+
+        Console.WriteLine();
+        return process.ExitCode;
+    }
+
+    private static void DrawProgressBar(double percentage, TimeSpan current, TimeSpan total)
+    {
+        // Ajusta a largura para não quebrar a linha em janelas estreitas.
+        var barWidth = Math.Clamp(Console.WindowWidth - 42, 10, 40);
+        var filled = (int)Math.Round(percentage / 100.0 * barWidth);
+        var bar = new string('█', filled) + new string('░', barWidth - filled);
+
+        Console.Write($"\rRenderizando: [{bar}] {percentage:0.0}% ({current:mm\\:ss} / {total:mm\\:ss})");
     }
 
     private static double ParseTime(string value, string fieldName)

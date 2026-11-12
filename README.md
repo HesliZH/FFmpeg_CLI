@@ -73,8 +73,20 @@ O programa não apaga o arquivo original. Se já existir um arquivo de saída co
 
 A conversão usa `-vf "scale=WxH,setsar=1"`, `-c:v libx264 -crf 20` e `-c:a copy` (áudio original preservado). O `setsar=1` garante pixels quadrados, evitando distorções em players modernos.
 
+## Como concatenar vídeos
+
+1. Escolha `4. Concatenar vídeos`.
+2. Informe a intro (opcional; Enter para usar a padrão configurada nas Configurações, se houver).
+3. Informe os vídeos na ordem da concatenação (Enter vazio para finalizar).
+4. Informe o destino ou pressione Enter para gerar `_concat.avi`.
+
+No menu `99. Configurações` é possível definir uma **Intro Padrão** (`IntroPath` no INI). Quando você não informa nada no passo 2, a intro padrão é usada automaticamente. Digite `-` no campo da intro nas configurações para limpá-la.
+
+Todos os trechos são normalizados antes da emenda (`scale=640:480,setsar=1,fps=30` e `aresample=44100`), evitando perda de sincronia entre intro e vídeos com FPS/áudio diferentes. A saída usa `mpeg4` (`-vtag XVID`) + MP3 em AVI 4:3, compatível com DVD Players. Durante a conversão, uma barra de progresso é exibida lendo o `time=` do log do FFmpeg.
+
 ## Observações
 
+- Na primeira execução, o programa cria o `MeuFFmpeg.ini` já preenchido com os valores padrão (`C:\Videos` e `C:\Videos\Saida`).
 - O modo preciso exige que a compilação do FFmpeg inclua `libx264`.
 - O modo rápido preserva os codecs originais; a extensão escolhida deve ser compatível com o conteúdo.
 - O código usa `ProcessStartInfo.ArgumentList`, evitando montar uma linha de comando vulnerável a problemas de aspas nos caminhos.

@@ -6,8 +6,15 @@ public sealed class AppSettings
 
     public string DefaultInputFolder { get; set; } = string.Empty;
     public string DefaultOutputFolder { get; set; } = string.Empty;
+    public string DefaultIntroPath { get; set; } = string.Empty;
 
     public static string DefaultConfigPath => Path.Combine(AppContext.BaseDirectory, FileName);
+
+    public static AppSettings CreateDefault() => new()
+    {
+        DefaultInputFolder = @"C:\Videos",
+        DefaultOutputFolder = @"C:\Videos\Saida"
+    };
 
     public static AppSettings Load(string? configPath = null)
     {
@@ -38,6 +45,9 @@ public sealed class AppSettings
                 case "OutputFolder":
                     settings.DefaultOutputFolder = value;
                     break;
+                case "IntroPath":
+                    settings.DefaultIntroPath = value;
+                    break;
             }
         }
 
@@ -58,7 +68,8 @@ public sealed class AppSettings
         {
             "[Paths]",
             $"InputFolder={normalizedInput}",
-            $"OutputFolder={normalizedOutput}"
+            $"OutputFolder={normalizedOutput}",
+            $"IntroPath={NormalizeIntroPath(settings.DefaultIntroPath)}"
         };
 
         File.WriteAllLines(path, content);
@@ -95,5 +106,14 @@ public sealed class AppSettings
             result = result[1..^1];
 
         return result;
+    }
+
+    private static string NormalizeIntroPath(string? value)
+    {
+        var cleaned = CleanPath(value);
+        if (string.IsNullOrWhiteSpace(cleaned))
+            return string.Empty;
+
+        return Path.IsPathRooted(cleaned) ? Path.GetFullPath(cleaned) : cleaned;
     }
 }

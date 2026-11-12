@@ -5,6 +5,13 @@ Console.Title = "MeuFFmpeg - CLI pessoal";
 var ffmpeg = new FFmpegService();
 var settings = AppSettings.Load();
 
+// Na primeira execução, cria o INI já preenchido com os valores padrão.
+if (!File.Exists(AppSettings.DefaultConfigPath))
+{
+    settings = AppSettings.CreateDefault();
+    AppSettings.Save(settings);
+}
+
 while (true)
 {
     Console.Clear();
@@ -14,6 +21,7 @@ while (true)
     Console.WriteLine("1. Cortar vídeo");
     Console.WriteLine("2. Verificar FFmpeg");
     Console.WriteLine("3. Converter para VHS");
+    Console.WriteLine("4. Concatenar vídeos");
     Console.WriteLine("==================================");
     Console.WriteLine("99. Configurações");
     Console.WriteLine("100. Sobre");
@@ -34,6 +42,9 @@ while (true)
             break;
         case "3":
             await ConvertToVhsAsync(ffmpeg, settings);
+            break;
+        case "4":
+            await ConcatVideosAsync(ffmpeg, settings);
             break;
         case "99":
             settings = ConfigureSettings(settings);
@@ -199,6 +210,87 @@ static async Task ConvertToVhsAsync(FFmpegService ffmpeg, AppSettings settings)
     Pause();
 }
 
+static async Task ConcatVideosAsync(FFmpegService ffmpeg, AppSettings settings)
+{
+    Console.Clear();
+    Console.WriteLine("========== Concatenar vídeos ==========\n");
+
+    var defaultInputFolder = !string.IsNullOrWhiteSpace(settings.DefaultInputFolder)
+        ? settings.DefaultInputFolder
+        : Directory.GetCurrentDirectory();
+
+    Console.WriteLine("Intro (opcional). Enter usa a padrão configurada, se houver.");
+    Console.Write($"Caminho (padrão: {defaultInputFolder}): ");
+    var rawIntro = Console.ReadLine();
+    var intro = string.IsNullOrWhiteSpace(rawIntro)
+        ? (!string.IsNullOrWhiteSpace(settings.DefaultIntroPath) ? settings.DefaultIntroPath : null)
+        : ResolvePath(rawIntro, defaultInputFolder);
+
+    if (intro is not null && !File.Exists(intro))
+    {
+        Console.WriteLine("\nIntro não encontrada.");
+        Pause();
+        return;
+    }
+
+    var videos = new List<string>();
+    Console.WriteLine("\nVídeos na ordem de concatenação (Enter vazio para finalizar):");
+    while (true)
+    {
+        Console.Write("Caminho (ou Enter para finalizar): ");
+        var raw = Console.ReadLine();
+        if (string.IsNullOrWhiteSpace(raw))
+            break;
+
+        var video = ResolvePath(raw, defaultInputFolder);
+        if (File.Exists(video))
+            videos.Add(video);
+        else
+            Console.WriteLine("Arquivo não encontrado. Tente novamente.");
+    }
+
+    if (videos.Count == 0)
+    {
+        Console.WriteLine("\nNenhum vídeo informado.");
+        Pause();
+        return;
+    }
+
+    var defaultOutputFolder = !string.IsNullOrWhiteSpace(settings.DefaultOutputFolder)
+        ? settings.DefaultOutputFolder
+        : Path.GetDirectoryName(videos[0])!;
+
+    Console.Write($"\nCaminho do arquivo de saída (padrão: {defaultOutputFolder}): ");
+    var rawOutput = Console.ReadLine();
+    var output = string.IsNullOrWhiteSpace(rawOutput)
+        ? SuggestOutputPath(videos[0], defaultOutputFolder, "_concat", ".avi")
+        : ResolvePath(rawOutput, defaultOutputFolder);
+
+    try
+    {
+        Console.WriteLine("\nIniciando FFmpeg...\n");
+        var exitCode = await ffmpeg.ConcatAsync(output, intro, videos);
+
+        Console.WriteLine(exitCode == 0
+            ? $"\nConcatenação concluída!\nArquivo: {output}"
+            : $"\nO FFmpeg terminou com código {exitCode}. Confira as mensagens acima.");
+    }
+    catch (ArgumentException ex)
+    {
+        Console.WriteLine($"\nEntrada inválida: {ex.Message}");
+    }
+    catch (FileNotFoundException ex)
+    {
+        Console.WriteLine($"\n{ex.Message}");
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"\nErro ao concatenar: {ex.Message}");
+    }
+
+    Pause();
+}
+
 static AppSettings ConfigureSettings(AppSettings currentSettings)
 {
     Console.Clear();
@@ -215,10 +307,15 @@ static AppSettings ConfigureSettings(AppSettings currentSettings)
         currentSettings.DefaultOutputFolder,
         "C:\\Videos\\Saida");
 
+    var introPath = PromptForOptionalFile(
+        "Intro padrão",
+        currentSettings.DefaultIntroPath);
+
     var settings = new AppSettings
     {
         DefaultInputFolder = inputFolder,
-        DefaultOutputFolder = outputFolder
+        DefaultOutputFolder = outputFolder,
+        DefaultIntroPath = introPath
     };
 
     AppSettings.Save(settings);
@@ -254,6 +351,28 @@ static string PromptForAbsoluteDirectory(string label, string currentValue, stri
         var absolute = Path.GetFullPath(entered);
         Directory.CreateDirectory(absolute);
         return absolute;
+    }
+}
+
+static string PromptForOptionalFile(string label, string currentValue)
+{
+    var currentText = string.IsNullOrWhiteSpace(currentValue) ? "(nenhuma)" : currentValue;
+    Console.WriteLine($"\n{label} [{currentText}] (caminho absoluto; Enter mantém, - limpa): ");
+
+    while (true)
+    {
+        var entered = CleanPath(Console.ReadLine());
+        if (string.IsNullOrWhiteSpace(entered))
+            return string.IsNullOrWhiteSpace(currentValue) ? string.Empty : Path.GetFullPath(currentValue);
+
+        if (entered == "-")
+            return string.Empty;
+
+        var absolute = Path.GetFullPath(entered);
+        if (File.Exists(absolute))
+            return absolute;
+
+        Console.WriteLine("\nArquivo não encontrado. Tente novamente (ou - para limpar).");
     }
 }
 
