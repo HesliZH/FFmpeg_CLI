@@ -88,11 +88,12 @@ Todos os trechos são normalizados antes da emenda (`scale=640:480,setsar=1,fps=
 
 1. Escolha `5. YouTube para VHS`.
 2. Informe a URL do vídeo do YouTube.
-3. Escolha o padrão de vídeo 4:3 (NTSC `640x480` ou PAL `768x576`).
-4. Informe a intro (opcional; mesmas regras da opção 4).
-5. Informe o destino ou pressione Enter para gerar `youtube_vhs.avi` na pasta de saída padrão.
+3. Opcional: corte de um trecho (início e duração), aplicado depois no FFmpeg com `-ss`/`-to`.
+4. Escolha o padrão de vídeo 4:3 (NTSC `640x480` ou PAL `768x576`).
+5. Informe a intro (opcional; mesmas regras da opção 4).
+6. Informe o destino ou pressione Enter para gerar `youtube_vhs.avi` na pasta de saída padrão.
 
-O fluxo baixa o vídeo com `yt-dlp` (`-f "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/b"` com `--merge-output-format mp4`) para um arquivo temporário e em seguida converte para AVI 4:3 com Xvid + MP3, aplicando a mesmo padrão do DVD Player. O temporário é apagado ao final, mesmo em caso de erro.
+O fluxo baixa o vídeo **completo** com `yt-dlp` (máx. 480p via `-f "bv*[height<=480][ext=mp4]+ba[ext=m4a]/b[height<=480][ext=mp4]/b[height<=480]"`, `-N 4` para 4 conexões simultâneas, User-Agent de navegador, `--extractor-args "youtube:player_client=android"` e `--js-runtimes node` para evitar throttling/extração limitada e `--merge-output-format mp4`) para um arquivo temporário — com barra de progresso. Em seguida o FFmpeg corta o trecho desejado (`-ss`/`-to` antes do `-i`) e converte para AVI 4:3 com Xvid + MP3, aplicando o mesmo padrão do DVD Player. O temporário é apagado ao final, mesmo em caso de erro.
 
 ### Instalação do yt-dlp
 

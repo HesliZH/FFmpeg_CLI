@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Text;
 using System.Text.RegularExpressions;
 
 namespace MeuFFmpeg.Services;
@@ -8,6 +9,9 @@ public sealed class FFmpegService
 {
     private const string DefaultFFmpegFolder = "C:\\ffmpeg\\bin";
     private readonly string _ffmpegPath;
+
+    private static readonly Regex DurationRegex = new(@"Duration:\s(\d{2}:\d{2}:\d{2}\.\d{2})");
+    private static readonly Regex TimeRegex = new(@"time=(\d{2}:\d{2}:\d{2}\.\d{2})");
 
     public FFmpegService()
     {
@@ -227,8 +231,16 @@ public sealed class FFmpegService
         string outputPath,
         string? introPath,
         int width,
-        int height)
+        int height,
+        double? cutStart = null,
+        double? cutEnd = null)
     {
+        if (cutStart is < 0)
+            throw new ArgumentException("O início do trecho não pode ser negativo.");
+
+        if (cutStart is not null && cutEnd is not null && cutEnd <= cutStart)
+            throw new ArgumentException("O trecho precisa ter fim depois do início.");
+
         var fullInput = Path.GetFullPath(inputPath);
         if (!File.Exists(fullInput))
             throw new FileNotFoundException("O vídeo de entrada não foi encontrado.", inputPath);
@@ -267,6 +279,20 @@ public sealed class FFmpegService
         {
             startInfo.ArgumentList.Add("-i");
             startInfo.ArgumentList.Add(fullIntro);
+        }
+
+        // Corta o trecho já na leitura do vídeo principal (-ss antes de -i busca rápido,
+        // acelerando bastante o processo; confere duração correta no teste empírico).
+        if (cutStart is not null)
+        {
+            startInfo.ArgumentList.Add("-ss");
+            startInfo.ArgumentList.Add(FormatSeconds(cutStart.Value));
+        }
+
+        if (cutEnd is not null)
+        {
+            startInfo.ArgumentList.Add("-to");
+            startInfo.ArgumentList.Add(FormatSeconds(cutEnd.Value));
         }
 
         startInfo.ArgumentList.Add("-i");
@@ -311,7 +337,17 @@ public sealed class FFmpegService
         startInfo.ArgumentList.Add("2");
         startInfo.ArgumentList.Add(fullOutput);
 
-        return await RunWithProgressAsync(startInfo);
+        // Com corte explícito, o "Duration:" que o FFmpeg imprime é do arquivo inteiro, então
+        // passamos o total real do trecho (e da intro) para a barra não congelar em ~0%.
+        double? expectedTotalSeconds = null;
+        if (cutStart is not null && cutEnd is not null)
+        {
+            expectedTotalSeconds = cutEnd.Value - cutStart.Value;
+            if (fullIntro is not null)
+                expectedTotalSeconds += await ProbeDurationAsync(fullIntro);
+        }
+
+        return await RunWithProgressAsync(startInfo, expectedTotalSeconds);
     }
 
     public async Task<int> ConcatAsync(
@@ -421,11 +457,14 @@ public sealed class FFmpegService
         return process.ExitCode;
     }
 
-    private static async Task<int> RunWithProgressAsync(ProcessStartInfo startInfo)
+    private static async Task<int> RunWithProgressAsync(ProcessStartInfo startInfo, double? totalSeconds = null)
     {
-        var totalDuration = TimeSpan.Zero;
-        var durationRegex = new Regex(@"Duration:\s(\d{2}:\d{2}:\d{2}\.\d{2})");
-        var timeRegex = new Regex(@"time=(\d{2}:\d{2}:\d{2}\.\d{2})");
+        // Quando o total é informado (corte de trecho), o "Duration:" dos inputs não serve,
+        // pois reflete o arquivo inteiro — o FFmpeg imprime o time= zerado a partir do corte.
+        var hasExplicitTotal = totalSeconds is > 0;
+        var totalDuration = hasExplicitTotal
+            ? TimeSpan.FromSeconds(totalSeconds!.Value)
+            : TimeSpan.Zero;
 
         using var process = new Process { StartInfo = startInfo };
 
@@ -434,12 +473,15 @@ public sealed class FFmpegService
             if (string.IsNullOrWhiteSpace(e.Data))
                 return;
 
-            // Com uma intro, o FFmpeg imprime "Duration:" uma vez por arquivo; soma ao total.
-            var durMatch = durationRegex.Match(e.Data);
-            if (durMatch.Success && TimeSpan.TryParse(durMatch.Groups[1].Value, out var parsedDuration))
-                totalDuration += parsedDuration;
+            // Sem corte, soma o "Duration:" de cada entrada (uma por cabeçalho de input).
+            if (!hasExplicitTotal)
+            {
+                var durMatch = DurationRegex.Match(e.Data);
+                if (durMatch.Success && TimeSpan.TryParse(durMatch.Groups[1].Value, out var parsedDuration))
+                    totalDuration += parsedDuration;
+            }
 
-            var timeMatch = timeRegex.Match(e.Data);
+            var timeMatch = TimeRegex.Match(e.Data);
             if (timeMatch.Success &&
                 totalDuration.TotalSeconds > 0 &&
                 TimeSpan.TryParse(timeMatch.Groups[1].Value, out var currentTime))
@@ -470,7 +512,40 @@ public sealed class FFmpegService
         Console.Write($"\rRenderizando: [{bar}] {percentage:0.0}% ({current:mm\\:ss} / {total:mm\\:ss})");
     }
 
-    private static double ParseTime(string value, string fieldName)
+    // Lê só o cabeçalho do arquivo (sem decodificar) para saber a duração da intro.
+    private async Task<double> ProbeDurationAsync(string filePath)
+    {
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = _ffmpegPath,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true
+        };
+        startInfo.ArgumentList.Add("-i");
+        startInfo.ArgumentList.Add(filePath);
+
+        using var process = new Process { StartInfo = startInfo };
+        var stderr = new StringBuilder();
+        process.ErrorDataReceived += (_, e) =>
+        {
+            if (!string.IsNullOrWhiteSpace(e.Data))
+                stderr.AppendLine(e.Data);
+        };
+
+        process.Start();
+        process.BeginErrorReadLine();
+        await process.StandardOutput.ReadToEndAsync();
+        await process.WaitForExitAsync();
+
+        var match = DurationRegex.Match(stderr.ToString());
+        return match.Success && TimeSpan.TryParse(match.Groups[1].Value, out var duration)
+            ? duration.TotalSeconds
+            : 0;
+    }
+
+    public static double ParseTime(string value, string fieldName)
     {
         if (string.IsNullOrWhiteSpace(value))
             throw new ArgumentException($"Informe o {fieldName}.");

@@ -310,6 +310,37 @@ static async Task YoutubeToVhsAsync(FFmpegService ffmpeg, YtDlpService ytDlp, Ap
         return;
     }
 
+    Console.WriteLine("\nCortar um trecho do vídeo? (opcional; Enter pula)");
+    Console.Write("Início do trecho (HH:MM:SS ou segundos): ");
+    var rawStart = Console.ReadLine()?.Trim();
+
+    double? sectionStart = null;
+    double? sectionEnd = null;
+
+    if (!string.IsNullOrWhiteSpace(rawStart))
+    {
+        Console.Write("Duração do trecho (HH:MM:SS ou segundos): ");
+        var rawDuration = Console.ReadLine()?.Trim();
+
+        try
+        {
+            var startSeconds = FFmpegService.ParseTime(rawStart, "início");
+            var durationSeconds = FFmpegService.ParseTime(rawDuration ?? "", "duração");
+
+            if (durationSeconds <= 0)
+                throw new ArgumentException("A duração precisa ser maior que zero.");
+
+            sectionStart = startSeconds;
+            sectionEnd = startSeconds + durationSeconds;
+        }
+        catch (ArgumentException ex)
+        {
+            Console.WriteLine($"\nEntrada inválida: {ex.Message}");
+            Pause();
+            return;
+        }
+    }
+
     Console.WriteLine("\nPadrão de vídeo 4:3:");
     Console.WriteLine("1. NTSC 640x480 (padrão)");
     Console.WriteLine("2. PAL 768x576");
@@ -350,7 +381,7 @@ static async Task YoutubeToVhsAsync(FFmpegService ffmpeg, YtDlpService ytDlp, Ap
 
     try
     {
-        Console.WriteLine("\n[1/2] Baixando vídeo do YouTube com yt-dlp...\n");
+        Console.WriteLine("\n[1/2] Baixando vídeo completo do YouTube com yt-dlp...\n");
         var downloadExit = await ytDlp.DownloadVideoAsync(url, tempFile);
 
         if (downloadExit != 0 || !File.Exists(tempFile))
@@ -360,8 +391,8 @@ static async Task YoutubeToVhsAsync(FFmpegService ffmpeg, YtDlpService ytDlp, Ap
             return;
         }
 
-        Console.WriteLine("[2/2] Renderizando e convertendo para o formato VHS/DVD...\n");
-        var exitCode = await ffmpeg.ConvertToVhsDvdAsync(tempFile, output, intro, width, height);
+        Console.WriteLine("[2/2] Cortando e renderizando para o formato VHS/DVD...\n");
+        var exitCode = await ffmpeg.ConvertToVhsDvdAsync(tempFile, output, intro, width, height, sectionStart, sectionEnd);
 
         Console.WriteLine(exitCode == 0
             ? $"\nConversão concluída!\nArquivo: {output}"
