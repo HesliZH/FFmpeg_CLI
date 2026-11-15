@@ -84,6 +84,26 @@ No menu `99. Configurações` é possível definir uma **Intro Padrão** (`Intro
 
 Todos os trechos são normalizados antes da emenda (`scale=640:480,setsar=1,fps=30` e `aresample=44100`), evitando perda de sincronia entre intro e vídeos com FPS/áudio diferentes. A saída usa `mpeg4` (`-vtag XVID`) + MP3 em AVI 4:3, compatível com DVD Players. Durante a conversão, uma barra de progresso é exibida lendo o `time=` do log do FFmpeg.
 
+## Como converter YouTube para VHS
+
+1. Escolha `5. YouTube para VHS`.
+2. Informe a URL do vídeo do YouTube.
+3. Escolha o padrão de vídeo 4:3 (NTSC `640x480` ou PAL `768x576`).
+4. Informe a intro (opcional; mesmas regras da opção 4).
+5. Informe o destino ou pressione Enter para gerar `youtube_vhs.avi` na pasta de saída padrão.
+
+O fluxo baixa o vídeo com `yt-dlp` (`-f "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/b"` com `--merge-output-format mp4`) para um arquivo temporário e em seguida converte para AVI 4:3 com Xvid + MP3, aplicando a mesmo padrão do DVD Player. O temporário é apagado ao final, mesmo em caso de erro.
+
+### Instalação do yt-dlp
+
+Baixe o executável em https://github.com/yt-dlp/yt-dlp e salve como:
+
+```text
+C:\yt-dlp\yt-dlp.exe
+```
+
+O programa procura nessa pasta e também no `PATH` do Windows.
+
 ## Observações
 
 - Na primeira execução, o programa cria o `MeuFFmpeg.ini` já preenchido com os valores padrão (`C:\Videos` e `C:\Videos\Saida`).

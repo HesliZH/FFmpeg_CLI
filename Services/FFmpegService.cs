@@ -222,6 +222,98 @@ public sealed class FFmpegService
         return await RunAsync(startInfo);
     }
 
+    public async Task<int> ConvertToVhsDvdAsync(
+        string inputPath,
+        string outputPath,
+        string? introPath,
+        int width,
+        int height)
+    {
+        var fullInput = Path.GetFullPath(inputPath);
+        if (!File.Exists(fullInput))
+            throw new FileNotFoundException("O vídeo de entrada não foi encontrado.", inputPath);
+
+        string? fullIntro = null;
+        if (!string.IsNullOrWhiteSpace(introPath))
+        {
+            fullIntro = Path.GetFullPath(introPath);
+            if (!File.Exists(fullIntro))
+                throw new FileNotFoundException("A intro não foi encontrada.", introPath);
+        }
+
+        var fullOutput = Path.GetFullPath(outputPath);
+        if (string.Equals(fullInput, fullOutput, StringComparison.OrdinalIgnoreCase) ||
+            fullIntro is not null &&
+            string.Equals(fullIntro, fullOutput, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ArgumentException("O arquivo de saída não pode ser um dos arquivos de entrada.");
+        }
+
+        var outputDirectory = Path.GetDirectoryName(fullOutput);
+        if (!string.IsNullOrWhiteSpace(outputDirectory))
+            Directory.CreateDirectory(outputDirectory);
+
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = _ffmpegPath,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true
+        };
+
+        startInfo.ArgumentList.Add("-y");
+        if (fullIntro is not null)
+        {
+            startInfo.ArgumentList.Add("-i");
+            startInfo.ArgumentList.Add(fullIntro);
+        }
+
+        startInfo.ArgumentList.Add("-i");
+        startInfo.ArgumentList.Add(fullInput);
+
+        if (fullIntro is null)
+        {
+            startInfo.ArgumentList.Add("-vf");
+            startInfo.ArgumentList.Add($"scale={width}:{height},setsar=1");
+        }
+        else
+        {
+            // Normaliza intro e vídeo (4:3, pixels quadrados, FPS e áudio) antes de emendar.
+            var resolution = $"{width}:{height}";
+            startInfo.ArgumentList.Add("-filter_complex");
+            startInfo.ArgumentList.Add(
+                $"[0:v]scale={resolution},setsar=1,fps=30[v0]; " +
+                $"[1:v]scale={resolution},setsar=1,fps=30[v1]; " +
+                "[0:a]aresample=44100[a0]; " +
+                "[1:a]aresample=44100[a1]; " +
+                "[v0][a0][v1][a1]concat=n=2:v=1:a=1[outv][outa]");
+            startInfo.ArgumentList.Add("-map");
+            startInfo.ArgumentList.Add("[outv]");
+            startInfo.ArgumentList.Add("-map");
+            startInfo.ArgumentList.Add("[outa]");
+        }
+
+        // Saída compatível com DVD Player (Xvid + MP3 em AVI 4:3).
+        startInfo.ArgumentList.Add("-c:v");
+        startInfo.ArgumentList.Add("mpeg4");
+        startInfo.ArgumentList.Add("-vtag");
+        startInfo.ArgumentList.Add("XVID");
+        startInfo.ArgumentList.Add("-qscale:v");
+        startInfo.ArgumentList.Add("4");
+        startInfo.ArgumentList.Add("-c:a");
+        startInfo.ArgumentList.Add("libmp3lame");
+        startInfo.ArgumentList.Add("-b:a");
+        startInfo.ArgumentList.Add("192k");
+        startInfo.ArgumentList.Add("-ar");
+        startInfo.ArgumentList.Add("44100");
+        startInfo.ArgumentList.Add("-ac");
+        startInfo.ArgumentList.Add("2");
+        startInfo.ArgumentList.Add(fullOutput);
+
+        return await RunWithProgressAsync(startInfo);
+    }
+
     public async Task<int> ConcatAsync(
         string outputPath,
         string? introPath,

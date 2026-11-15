@@ -3,6 +3,7 @@ using MeuFFmpeg.Services;
 
 Console.Title = "MeuFFmpeg - CLI pessoal";
 var ffmpeg = new FFmpegService();
+var ytDlp = new YtDlpService();
 var settings = AppSettings.Load();
 
 // Na primeira execução, cria o INI já preenchido com os valores padrão.
@@ -22,6 +23,7 @@ while (true)
     Console.WriteLine("2. Verificar FFmpeg");
     Console.WriteLine("3. Converter para VHS");
     Console.WriteLine("4. Concatenar vídeos");
+    Console.WriteLine("5. Converter vídeos do Youtube para VHS");
     Console.WriteLine("==================================");
     Console.WriteLine("99. Configurações");
     Console.WriteLine("100. Sobre");
@@ -45,6 +47,9 @@ while (true)
             break;
         case "4":
             await ConcatVideosAsync(ffmpeg, settings);
+            break;
+        case "5":
+            await YoutubeToVhsAsync(ffmpeg, ytDlp, settings);
             break;
         case "99":
             settings = ConfigureSettings(settings);
@@ -286,6 +291,105 @@ static async Task ConcatVideosAsync(FFmpegService ffmpeg, AppSettings settings)
     catch (Exception ex)
     {
         Console.WriteLine($"\nErro ao concatenar: {ex.Message}");
+    }
+
+    Pause();
+}
+
+static async Task YoutubeToVhsAsync(FFmpegService ffmpeg, YtDlpService ytDlp, AppSettings settings)
+{
+    Console.Clear();
+    Console.WriteLine("========== YouTube para VHS ==========\n");
+
+    Console.Write("URL do vídeo do YouTube: ");
+    var url = Console.ReadLine()?.Trim();
+    if (string.IsNullOrWhiteSpace(url))
+    {
+        Console.WriteLine("\nURL não informada.");
+        Pause();
+        return;
+    }
+
+    Console.WriteLine("\nPadrão de vídeo 4:3:");
+    Console.WriteLine("1. NTSC 640x480 (padrão)");
+    Console.WriteLine("2. PAL 768x576");
+    Console.Write("Escolha (1 ou 2) [1]: ");
+    var standard = Console.ReadLine()?.Trim();
+    var (width, height) = standard == "2" ? (768, 576) : (640, 480);
+
+    var defaultInputFolder = !string.IsNullOrWhiteSpace(settings.DefaultInputFolder)
+        ? settings.DefaultInputFolder
+        : Directory.GetCurrentDirectory();
+
+    Console.WriteLine("\nIntro (opcional). Enter usa a padrão configurada, se houver.");
+    Console.Write($"Caminho (padrão: {defaultInputFolder}): ");
+    var rawIntro = Console.ReadLine();
+    var intro = string.IsNullOrWhiteSpace(rawIntro)
+        ? (!string.IsNullOrWhiteSpace(settings.DefaultIntroPath) ? settings.DefaultIntroPath : null)
+        : ResolvePath(rawIntro, defaultInputFolder);
+
+    if (intro is not null && !File.Exists(intro))
+    {
+        Console.WriteLine("\nIntro não encontrada.");
+        Pause();
+        return;
+    }
+
+    var defaultOutputFolder = !string.IsNullOrWhiteSpace(settings.DefaultOutputFolder)
+        ? settings.DefaultOutputFolder
+        : Directory.GetCurrentDirectory();
+
+    Console.Write($"\nCaminho do arquivo de saída (padrão: {defaultOutputFolder}): ");
+    var rawOutput = Console.ReadLine();
+    var output = string.IsNullOrWhiteSpace(rawOutput)
+        ? Path.Combine(defaultOutputFolder, "youtube_vhs.avi")
+        : ResolvePath(rawOutput, defaultOutputFolder);
+
+    // Baixa o vídeo cru num arquivo temporário para não poluir a pasta de trabalho.
+    var tempFile = Path.Combine(Path.GetTempPath(), $"yt_vhs_{Guid.NewGuid():N}.mp4");
+
+    try
+    {
+        Console.WriteLine("\n[1/2] Baixando vídeo do YouTube com yt-dlp...\n");
+        var downloadExit = await ytDlp.DownloadVideoAsync(url, tempFile);
+
+        if (downloadExit != 0 || !File.Exists(tempFile))
+        {
+            Console.WriteLine("\nFalha no download do vídeo.");
+            Pause();
+            return;
+        }
+
+        Console.WriteLine("[2/2] Renderizando e convertendo para o formato VHS/DVD...\n");
+        var exitCode = await ffmpeg.ConvertToVhsDvdAsync(tempFile, output, intro, width, height);
+
+        Console.WriteLine(exitCode == 0
+            ? $"\nConversão concluída!\nArquivo: {output}"
+            : $"\nO FFmpeg terminou com código {exitCode}. Confira as mensagens acima.");
+    }
+    catch (System.ComponentModel.Win32Exception)
+    {
+        Console.WriteLine("\nyt-dlp não encontrado. Coloque yt-dlp.exe em C:\\yt-dlp ou adicione a pasta ao PATH do Windows.");
+    }
+    catch (ArgumentException ex)
+    {
+        Console.WriteLine($"\nEntrada inválida: {ex.Message}");
+    }
+    catch (FileNotFoundException ex)
+    {
+        Console.WriteLine($"\n{ex.Message}");
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"\nErro ao processar o vídeo: {ex.Message}");
+    }
+    finally
+    {
+        if (File.Exists(tempFile))
+        {
+            try { File.Delete(tempFile); }
+            catch { /* limpeza é melhor esforço */ }
+        }
     }
 
     Pause();
