@@ -75,6 +75,7 @@ public sealed class YtDlpService
         {
             FileName = _ytDlpPath,
             UseShellExecute = false,
+            RedirectStandardOutput = true,
             RedirectStandardError = true,
             CreateNoWindow = true
         };
@@ -88,13 +89,6 @@ public sealed class YtDlpService
         // User-Agent de navegador comum evita estrangulamento de banda pelo YouTube.
         startInfo.ArgumentList.Add("--user-agent");
         startInfo.ArgumentList.Add("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
-        // Finge ser o app oficial do Android: o YouTube entrega banda cheia nesse player client.
-        startInfo.ArgumentList.Add("--extractor-args");
-        startInfo.ArgumentList.Add("youtube:player_client=android");
-        // Usa o Node.js instalado como runtime de JavaScript (sem ele, a extração do YouTube
-        // fica limitada e alguns formatos somem).
-        startInfo.ArgumentList.Add("--js-runtimes");
-        startInfo.ArgumentList.Add("node");
         startInfo.ArgumentList.Add("--merge-output-format");
         startInfo.ArgumentList.Add("mp4");
         // Cada atualização de progresso do yt-dlp vira uma linha, permitindo ler e desenhar a barra.
@@ -106,27 +100,13 @@ public sealed class YtDlpService
 
         using var process = new Process { StartInfo = startInfo };
 
-        process.ErrorDataReceived += (_, e) =>
-        {
-            if (string.IsNullOrWhiteSpace(e.Data))
-                return;
-
-            var match = DownloadProgressRegex.Match(e.Data);
-            if (match.Success &&
-                double.TryParse(match.Groups[1].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out var percentage))
-            {
-                var status = Regex.Replace(match.Groups[2].Value.Trim(), @"\s+", " ");
-                DrawDownloadProgressBar(percentage, status);
-                return;
-            }
-
-            // Só repassa linhas informativas do próprio yt-dlp; o log cru do FFmpeg interno
-            // (merge/remux) é descartado para não tomar a tela.
-            if (IsInformativeLine(e.Data))
-                Console.WriteLine(e.Data);
-        };
+        // O yt-dlp envia progresso e linhas de info pelo stdout e warnings/erros pelo stderr;
+        // ambos os fluxos passam pelo mesmo tratamento, garantindo que a barra seja desenhada.
+        process.OutputDataReceived += (_, e) => HandleYtDlpLine(e.Data);
+        process.ErrorDataReceived += (_, e) => HandleYtDlpLine(e.Data);
 
         process.Start();
+        process.BeginOutputReadLine();
         process.BeginErrorReadLine();
 
         await process.WaitForExitAsync();
@@ -134,14 +114,63 @@ public sealed class YtDlpService
         return process.ExitCode;
     }
 
+    private static void HandleYtDlpLine(string? data)
+    {
+        if (string.IsNullOrWhiteSpace(data))
+            return;
+
+        var match = DownloadProgressRegex.Match(data);
+        if (match.Success &&
+            double.TryParse(match.Groups[1].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out var percentage))
+        {
+            var status = Regex.Replace(match.Groups[2].Value.Trim(), @"\s+", " ");
+            DrawDownloadProgressBar(percentage, status);
+            return;
+        }
+
+        // Só repassa linhas informativas do próprio yt-dlp; o log cru do FFmpeg interno
+        // (merge/remux) é descartado para não tomar a tela.
+        if (IsInformativeLine(data))
+        {
+            ClearCurrentLine();
+            Console.WriteLine(data);
+        }
+    }
+
     private static void DrawDownloadProgressBar(double percentage, string status)
     {
-        // Ajusta a largura para não quebrar a linha em janelas estreitas.
-        var barWidth = Math.Clamp(Console.WindowWidth - 40, 10, 40);
+        // Largura total da linha, respeitando a janela para não quebrar em telas estreitas.
+        var totalWidth = Math.Clamp(Console.WindowWidth - 2, 30, 120);
+
+        // Informação extra (%, velocidade, ETA...) ocupa o restante depois do prefixo e da barra.
+        const int fixedPrefix = 13; // "Baixando: [" + "] "
+        var barWidth = Math.Clamp(totalWidth / 3, 10, 40);
+        var infoMax = Math.Max(0, totalWidth - fixedPrefix - barWidth);
+        var info = $"{percentage:0.0}% {status}";
+        if (info.Length > infoMax)
+            info = info[..infoMax];
+
         var filled = (int)Math.Round(percentage / 100.0 * barWidth);
         var bar = new string('█', filled) + new string('░', barWidth - filled);
 
-        Console.Write($"\rBaixando: [{bar}] {percentage:0.0}% {status}");
+        // Preenche com espaços para apagar resíduos de linhas anteriores mais longas.
+        var line = $"Baixando: [{bar}] {info}";
+        Console.Write("\r" + line.PadRight(totalWidth));
+    }
+
+    // Limpa a linha atual para a mensagem informativa não ficar sobreposta à barra de progresso.
+    private static void ClearCurrentLine()
+    {
+        var width = Math.Clamp(GetSafeConsoleWidth() - 2, 30, 120);
+        Console.Write($"\r{new string(' ', width)}\r");
+    }
+
+    // Com a saída redirecionada (IDE/sandbox), ler Console.WindowWidth lança exceção;
+    // cai para um valor padrão para a barra continuar funcionando.
+    private static int GetSafeConsoleWidth()
+    {
+        try { return Console.WindowWidth; }
+        catch { return 80; }
     }
 
     private static bool IsInformativeLine(string line)

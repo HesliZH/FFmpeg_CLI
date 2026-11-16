@@ -1,7 +1,8 @@
 using MeuFFmpeg;
 using MeuFFmpeg.Services;
 
-Console.Title = "MeuFFmpeg - CLI pessoal";
+// O título falha quando a saída é redirecionada (IDE/sandbox); a CLI segue sem ele.
+try { Console.Title = "MeuFFmpeg - CLI pessoal"; } catch { /* título é opcional */ }
 var ffmpeg = new FFmpegService();
 var ytDlp = new YtDlpService();
 var settings = AppSettings.Load();
@@ -352,12 +353,14 @@ static async Task YoutubeToVhsAsync(FFmpegService ffmpeg, YtDlpService ytDlp, Ap
         ? settings.DefaultInputFolder
         : Directory.GetCurrentDirectory();
 
-    Console.WriteLine("\nIntro (opcional). Enter usa a padrão configurada, se houver.");
+    Console.WriteLine("\nIntro (opcional). Enter usa a padrão configurada, se houver; digite n para renderizar sem intro, ou informe um caminho.");
     Console.Write($"Caminho (padrão: {defaultInputFolder}): ");
     var rawIntro = Console.ReadLine();
     var intro = string.IsNullOrWhiteSpace(rawIntro)
         ? (!string.IsNullOrWhiteSpace(settings.DefaultIntroPath) ? settings.DefaultIntroPath : null)
-        : ResolvePath(rawIntro, defaultInputFolder);
+        : IsNoIntroResponse(rawIntro)
+            ? null
+            : ResolvePath(rawIntro, defaultInputFolder);
 
     if (intro is not null && !File.Exists(intro))
     {
@@ -521,6 +524,17 @@ static string ResolvePath(string input, string defaultFolder)
         return Path.GetFullPath(cleaned);
 
     return Path.GetFullPath(Path.Combine(defaultFolder, cleaned));
+}
+
+// Reconhece respostas de "sem intro" (n, não, nao, sem ou -).
+static bool IsNoIntroResponse(string value)
+{
+    var normalized = value.Trim();
+    return normalized.Equals("n", StringComparison.OrdinalIgnoreCase)
+        || normalized.Equals("nao", StringComparison.OrdinalIgnoreCase)
+        || normalized.Equals("não", StringComparison.OrdinalIgnoreCase)
+        || normalized.Equals("sem", StringComparison.OrdinalIgnoreCase)
+        || normalized == "-";
 }
 
 static string SearchInputPathInDefaultFolder(string defaultFolder)
