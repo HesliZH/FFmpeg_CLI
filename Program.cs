@@ -394,12 +394,74 @@ static async Task YoutubeToVhsAsync(FFmpegService ffmpeg, YtDlpService ytDlp, Ap
             return;
         }
 
-        Console.WriteLine("[2/2] Cortando e renderizando para o formato VHS/DVD...\n");
-        var exitCode = await ffmpeg.ConvertToVhsDvdAsync(tempFile, output, intro, width, height, sectionStart, sectionEnd);
+        // Duração efetiva a renderizar: o trecho cortado, se houver, ou o vídeo completo.
+        const double maxPartSeconds = 45 * 60;
+        var probedDuration = await ffmpeg.ProbeDurationAsync(tempFile);
+        var effectiveTotal = sectionStart is not null && sectionEnd is not null
+            ? sectionEnd.Value - sectionStart.Value
+            : probedDuration;
 
-        Console.WriteLine(exitCode == 0
-            ? $"\nConversão concluída!\nArquivo: {output}"
-            : $"\nO FFmpeg terminou com código {exitCode}. Confira as mensagens acima.");
+        var shouldPartition = false;
+        if (effectiveTotal > maxPartSeconds)
+        {
+            Console.Write($"\nO vídeo tem mais de 45 minutos ({TimeSpan.FromSeconds(effectiveTotal):hh\\:mm\\:ss}). Deseja particionar em partes de até 45 minutos? (S/N): ");
+            var answer = Console.ReadLine()?.Trim();
+            shouldPartition = !string.IsNullOrWhiteSpace(answer) &&
+                (answer.StartsWith("s", StringComparison.OrdinalIgnoreCase) ||
+                 answer.StartsWith("y", StringComparison.OrdinalIgnoreCase));
+        }
+
+        // Cada parte vira um corte próprio; sem particionamento, mantém o trecho original.
+        var chunks = new List<(double? Start, double? End)>();
+        if (shouldPartition)
+        {
+            var baseStart = sectionStart ?? 0;
+            var baseEnd = sectionEnd ?? probedDuration;
+            for (var s = baseStart; s < baseEnd; s += maxPartSeconds)
+                chunks.Add((s, Math.Min(baseEnd, s + maxPartSeconds)));
+        }
+        else
+        {
+            chunks.Add((sectionStart, sectionEnd));
+        }
+
+        Console.WriteLine(shouldPartition
+            ? $"[2/2] Particionando e renderizando {chunks.Count} partes para o formato VHS/DVD...\n"
+            : "[2/2] Cortando e renderizando para o formato VHS/DVD...\n");
+
+        var outputs = new List<string>();
+        var allOk = true;
+        for (var i = 0; i < chunks.Count; i++)
+        {
+            var (partStart, partEnd) = chunks[i];
+            var partOutput = chunks.Count == 1
+                ? output
+                : BuildPartOutputPath(output, i + 1);
+
+            if (chunks.Count > 1)
+                Console.WriteLine($"Parte {i + 1}/{chunks.Count} [{TimeSpan.FromSeconds(partStart ?? 0):hh\\:mm\\:ss} - {TimeSpan.FromSeconds(partEnd ?? 0):hh\\:mm\\:ss}]:\n");
+
+            // A intro entra apenas na parte 1; as demais partes saem direto da fonte.
+            var partIntro = i == 0 ? intro : null;
+
+            var exitCode = await ffmpeg.ConvertToVhsDvdAsync(tempFile, partOutput, partIntro, width, height, partStart, partEnd);
+
+            if (exitCode != 0)
+            {
+                Console.WriteLine($"\nO FFmpeg terminou com código {exitCode} na parte {i + 1}. Confira as mensagens acima.");
+                allOk = false;
+                break;
+            }
+
+            outputs.Add(partOutput);
+        }
+
+        if (allOk)
+        {
+            Console.WriteLine(outputs.Count == 1
+                ? $"\nConversão concluída!\nArquivo: {outputs[0]}"
+                : $"\nConversão concluída! {outputs.Count} partes geradas:\n" + string.Join("\n", outputs.Select(p => $"- {p}")));
+        }
     }
     catch (System.ComponentModel.Win32Exception)
     {
@@ -427,6 +489,16 @@ static async Task YoutubeToVhsAsync(FFmpegService ffmpeg, YtDlpService ytDlp, Ap
     }
 
     Pause();
+}
+
+// Gera o caminho da parte N de um particionamento (ex.: video.avi -> video_part2.avi).
+static string BuildPartOutputPath(string baseOutput, int partNumber)
+{
+    var folder = Path.GetDirectoryName(baseOutput);
+    var name = Path.GetFileNameWithoutExtension(baseOutput);
+    var ext = Path.GetExtension(baseOutput);
+    var safeFolder = string.IsNullOrWhiteSpace(folder) ? Directory.GetCurrentDirectory() : folder;
+    return Path.Combine(safeFolder, $"{name}_part{partNumber}{ext}");
 }
 
 static AppSettings ConfigureSettings(AppSettings currentSettings)

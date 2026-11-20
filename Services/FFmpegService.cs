@@ -512,8 +512,8 @@ public sealed class FFmpegService
         Console.Write($"\rRenderizando: [{bar}] {percentage:0.0}% ({current:mm\\:ss} / {total:mm\\:ss})");
     }
 
-    // Lê só o cabeçalho do arquivo (sem decodificar) para saber a duração da intro.
-    private async Task<double> ProbeDurationAsync(string filePath)
+    // Lê só o cabeçalho do arquivo (sem decodificar) para saber a duração (intro ou vídeo completo).
+    public async Task<double> ProbeDurationAsync(string filePath)
     {
         var startInfo = new ProcessStartInfo
         {
